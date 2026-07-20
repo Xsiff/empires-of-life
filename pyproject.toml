@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "empires-of-life"
+version = "0.1.0"
+description = "Minimlaistic empire simulator trained with RL"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "sts2-cli contributors" }]
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pre-commit",
+  "pytest",
+  "ruff",
+  "ty",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+markers = [
+  "slow: long-running integration coverage",
+]
