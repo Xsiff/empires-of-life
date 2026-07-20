@@ -1,6 +1,4 @@
-import pytest
-
-torch = pytest.importorskip("torch")
+import torch
 
 from eol.micro.model import DirectionPolicy
 from eol.micro.reward import RewardConfig, compute_reward

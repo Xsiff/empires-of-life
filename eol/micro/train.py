@@ -112,7 +112,9 @@ def rollout_episode(
     rewards: list[float] = []
 
     for _ in range(max_steps):
-        state = encode_state(agent_position, target_position, environment.size).unsqueeze(0)
+        state = encode_state(
+            agent_position, target_position, environment.size
+        ).unsqueeze(0)
         logits = policy(state)
         distribution = Categorical(logits=logits)
         action = distribution.sample()
@@ -198,7 +200,10 @@ def train_policy(
         )
         returns = discounted_returns(episode_rewards, training_config.gamma)
         loss = -torch.stack(
-            [log_prob * episode_return for log_prob, episode_return in zip(log_probabilities, returns)]
+            [
+                log_prob * episode_return
+                for log_prob, episode_return in zip(log_probabilities, returns)
+            ]
         ).sum()
         loss.backward()
         optimizer.step()
