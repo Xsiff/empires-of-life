@@ -5,12 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import random
+import time
 
 import torch
 from torch import optim
 from torch.distributions import Categorical
 
-from eol.environment import RandomEnvironmentGenerator
+from eol.environment import CellType, Environment, RandomEnvironmentGenerator
 from eol.micro.model import DirectionPolicy
 from eol.micro.reward import RewardConfig, compute_reward
 
@@ -27,22 +28,25 @@ ACTIONS: tuple[tuple[int, int], ...] = (
 class TrainingConfig:
     """Hyperparameters for REINFORCE training."""
 
-    grid_size: int = 6
-    obstacle_count: int = 4
-    episodes: int = 1_000
-    max_steps: int = 30
+    grid_size: int = 16
+    obstacle_count: int = 12
+    episodes: int = 20_000
+    max_steps: int = 60
     hidden_dim: int = 64
     learning_rate: float = 1e-3
     gamma: float = 0.99
     seed: int = 7
     print_every: int = 100
     save_path: Path = Path("eol/micro/policy.pt")
+    demo_sleep_seconds: float = 0.25
+    demo_environment_count: int = 10
 
 
 def encode_state(
     agent_position: tuple[int, int],
     target_position: tuple[int, int],
     grid_size: int,
+    obstacle_positions: set[tuple[int, int]],
 ) -> torch.Tensor:
     """Encode positions into normalized model inputs."""
 
@@ -51,6 +55,19 @@ def encode_state(
     target_row, target_col = target_position
     delta_row = target_row - agent_row
     delta_col = target_col - agent_col
+    local_blockers = []
+
+    for delta_row_step, delta_col_step in ACTIONS:
+        next_row = agent_row + delta_row_step
+        next_col = agent_col + delta_col_step
+        is_blocked = (
+            next_row < 0
+            or next_row >= grid_size
+            or next_col < 0
+            or next_col >= grid_size
+            or (next_row, next_col) in obstacle_positions
+        )
+        local_blockers.append(float(is_blocked))
 
     return torch.tensor(
         [
@@ -60,6 +77,7 @@ def encode_state(
             target_col / max_index,
             delta_row / max_index,
             delta_col / max_index,
+            *local_blockers,
         ],
         dtype=torch.float32,
     )
@@ -95,6 +113,182 @@ def apply_action(
     return candidate_position, False, False
 
 
+def get_valid_action_mask(
+    agent_position: tuple[int, int],
+    grid_size: int,
+    obstacle_positions: set[tuple[int, int]],
+) -> torch.Tensor:
+    """Return a mask where valid moves are 1 and collisions are 0."""
+
+    valid_actions = []
+
+    for delta_row, delta_col in ACTIONS:
+        next_row = agent_position[0] + delta_row
+        next_col = agent_position[1] + delta_col
+        is_valid = (
+            0 <= next_row < grid_size
+            and 0 <= next_col < grid_size
+            and (next_row, next_col) not in obstacle_positions
+        )
+        valid_actions.append(float(is_valid))
+
+    return torch.tensor(valid_actions, dtype=torch.float32)
+
+
+def mask_action_logits(
+    logits: torch.Tensor, valid_action_mask: torch.Tensor
+) -> torch.Tensor:
+    """Prevent the policy from selecting obstacle or wall collisions."""
+
+    invalid_fill_value = torch.finfo(logits.dtype).min
+    mask = valid_action_mask.to(device=logits.device, dtype=torch.bool).unsqueeze(0)
+    return logits.masked_fill(~mask, invalid_fill_value)
+
+
+def build_environment_frame(
+    environment: Environment,
+    agent_position: tuple[int, int],
+) -> list[list[CellType]]:
+    """Build a renderable grid for the current agent position."""
+
+    grid = [
+        [CellType.EMPTY for _ in range(environment.size)]
+        for _ in range(environment.size)
+    ]
+    target_row, target_col = environment.target_position
+    grid[target_row][target_col] = CellType.TARGET
+
+    for obstacle_row, obstacle_col in environment.obstacle_positions:
+        grid[obstacle_row][obstacle_col] = CellType.OBSTACLE
+
+    agent_row, agent_col = agent_position
+    grid[agent_row][agent_col] = CellType.AGENT
+    return grid
+
+
+def render_grid(grid: list[list[CellType]]) -> str:
+    """Render a grid into an ASCII board."""
+
+    symbols = {
+        CellType.EMPTY: ".",
+        CellType.OBSTACLE: "#",
+        CellType.AGENT: "A",
+        CellType.TARGET: "T",
+    }
+    return "\n".join(" ".join(symbols[cell] for cell in row) for row in grid)
+
+
+def select_greedy_action(
+    policy: DirectionPolicy,
+    agent_position: tuple[int, int],
+    target_position: tuple[int, int],
+    grid_size: int,
+    obstacle_positions: set[tuple[int, int]],
+) -> int:
+    """Choose the highest-scoring action for visualization/evaluation."""
+
+    state = encode_state(
+        agent_position,
+        target_position,
+        grid_size,
+        obstacle_positions,
+    ).unsqueeze(0)
+    valid_action_mask = get_valid_action_mask(
+        agent_position=agent_position,
+        grid_size=grid_size,
+        obstacle_positions=obstacle_positions,
+    )
+    with torch.no_grad():
+        logits = mask_action_logits(policy(state), valid_action_mask)
+    return int(torch.argmax(logits, dim=1).item())
+
+
+def visualize_policy(
+    policy: DirectionPolicy,
+    environment_generator: RandomEnvironmentGenerator,
+    max_steps: int,
+    sleep_seconds: float = 0.25,
+) -> bool:
+    """Run one greedy episode and print the grid after each move."""
+
+    environment = environment_generator.generate_environment()
+    obstacle_positions = set(environment.obstacle_positions)
+    agent_position = environment.agent_position
+
+    print("Initial environment:")
+    print(render_grid(build_environment_frame(environment, agent_position)))
+
+    for step in range(1, max_steps + 1):
+        if agent_position == environment.target_position:
+            print(f"Target reached in {step - 1} steps.")
+            return True
+
+        action_index = select_greedy_action(
+            policy=policy,
+            agent_position=agent_position,
+            target_position=environment.target_position,
+            grid_size=environment.size,
+            obstacle_positions=obstacle_positions,
+        )
+        next_position, hit_obstacle, hit_wall = apply_action(
+            agent_position=agent_position,
+            action_index=action_index,
+            grid_size=environment.size,
+            obstacle_positions=obstacle_positions,
+        )
+        agent_position = next_position
+
+        print("")
+        print(f"Step {step}: obstacle={hit_obstacle} wall={hit_wall}")
+        print(render_grid(build_environment_frame(environment, agent_position)))
+
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+        if agent_position == environment.target_position:
+            print(f"Target reached in {step} steps.")
+            return True
+
+    print("Target was not reached within the demo step limit.")
+    return False
+
+
+def visualize_multiple_environments(
+    policy: DirectionPolicy,
+    config: TrainingConfig,
+) -> list[bool]:
+    """Show greedy rollouts for several post-training environments."""
+
+    results: list[bool] = []
+
+    for environment_index in range(config.demo_environment_count):
+        demo_generator = RandomEnvironmentGenerator(
+            size=config.grid_size,
+            obstacle_count=config.obstacle_count,
+            seed=config.seed + 1 + environment_index,
+        )
+        print("")
+        print(
+            f"=== Demo Environment {environment_index + 1}/"
+            f"{config.demo_environment_count} ==="
+        )
+        reached_target = visualize_policy(
+            policy=policy,
+            environment_generator=demo_generator,
+            max_steps=config.max_steps,
+            sleep_seconds=config.demo_sleep_seconds,
+        )
+        results.append(reached_target)
+
+    successes = sum(results)
+    print("")
+    print(
+        f"Demo summary: reached target in {successes}/"
+        f"{config.demo_environment_count} environments."
+    )
+    return results
+
+
 def rollout_episode(
     policy: DirectionPolicy,
     environment_generator: RandomEnvironmentGenerator,
@@ -107,15 +301,24 @@ def rollout_episode(
     obstacle_positions = set(environment.obstacle_positions)
     agent_position = environment.agent_position
     target_position = environment.target_position
+    visited_positions = {agent_position}
 
     log_probabilities: list[torch.Tensor] = []
     rewards: list[float] = []
 
-    for _ in range(max_steps):
+    for step_index in range(max_steps):
         state = encode_state(
-            agent_position, target_position, environment.size
+            agent_position,
+            target_position,
+            environment.size,
+            obstacle_positions,
         ).unsqueeze(0)
-        logits = policy(state)
+        valid_action_mask = get_valid_action_mask(
+            agent_position=agent_position,
+            grid_size=environment.size,
+            obstacle_positions=obstacle_positions,
+        )
+        logits = mask_action_logits(policy(state), valid_action_mask)
         distribution = Categorical(logits=logits)
         action = distribution.sample()
 
@@ -128,6 +331,8 @@ def rollout_episode(
         )
         new_distance = manhattan_distance(next_position, target_position)
         reached_target = next_position == target_position
+        revisited_position = next_position in visited_positions
+        episode_finished = reached_target or step_index == max_steps - 1
 
         reward = compute_reward(
             previous_distance=previous_distance,
@@ -135,12 +340,15 @@ def rollout_episode(
             reached_target=reached_target,
             hit_obstacle=hit_obstacle,
             hit_wall=hit_wall,
+            revisited_position=revisited_position,
+            episode_finished=episode_finished,
             config=reward_config,
         )
 
         log_probabilities.append(distribution.log_prob(action))
         rewards.append(reward)
         agent_position = next_position
+        visited_positions.add(agent_position)
 
         if reached_target:
             return log_probabilities, rewards, True
@@ -221,5 +429,18 @@ def train_policy(
     return policy
 
 
+def train_and_visualize(
+    config: TrainingConfig | None = None,
+    reward_config: RewardConfig | None = None,
+) -> DirectionPolicy:
+    """Train a policy and show one post-training greedy rollout."""
+
+    training_config = config or TrainingConfig()
+    rewards = reward_config or RewardConfig()
+    policy = train_policy(config=training_config, reward_config=rewards)
+    visualize_multiple_environments(policy=policy, config=training_config)
+    return policy
+
+
 if __name__ == "__main__":
-    train_policy()
+    train_and_visualize()
