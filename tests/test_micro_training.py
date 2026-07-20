@@ -4,12 +4,15 @@ from eol.micro.model import DirectionPolicy
 from eol.micro.reward import RewardConfig, compute_reward
 from eol.micro.train import (
     TrainingConfig,
-    build_environment_frame,
     encode_state,
     get_valid_action_mask,
     mask_action_logits,
-    render_grid,
     train_policy,
+)
+from eol.visualization import (
+    build_environment_frame,
+    render_grid,
+    select_greedy_action,
 )
 
 
@@ -149,3 +152,43 @@ def test_mask_action_logits_removes_invalid_moves() -> None:
     masked_logits = mask_action_logits(logits, mask)
 
     assert torch.argmax(masked_logits, dim=1).item() == 3
+
+
+def test_select_greedy_action_avoids_visited_positions_when_possible() -> None:
+    policy = DirectionPolicy(hidden_dim=8)
+
+    def forward_override(_state: torch.Tensor) -> torch.Tensor:
+        return torch.tensor([[1.0, 4.0, 2.0, 3.0]], dtype=torch.float32)
+
+    policy.forward = forward_override  # type: ignore
+
+    action = select_greedy_action(
+        policy=policy,
+        agent_position=(1, 1),
+        target_position=(2, 2),
+        grid_size=4,
+        obstacle_positions=set(),
+        visited_positions={(2, 1), (1, 0)},
+    )
+
+    assert action == 3
+
+
+def test_select_greedy_action_allows_revisits_when_no_alternative_exists() -> None:
+    policy = DirectionPolicy(hidden_dim=8)
+
+    def forward_override(_state: torch.Tensor) -> torch.Tensor:
+        return torch.tensor([[1.0, 4.0, 2.0, 3.0]], dtype=torch.float32)
+
+    policy.forward = forward_override  # type: ignore
+
+    action = select_greedy_action(
+        policy=policy,
+        agent_position=(0, 0),
+        target_position=(2, 2),
+        grid_size=3,
+        obstacle_positions={(0, 1)},
+        visited_positions={(1, 0)},
+    )
+
+    assert action == 1
