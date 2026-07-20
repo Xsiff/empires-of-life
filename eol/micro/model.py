@@ -13,15 +13,18 @@ class DirectionPolicy(nn.Module):
         self, input_dim: int = 10, hidden_dim: int = 64, action_dim: int = 4
     ) -> None:
         super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, action_dim),
-        )
+        self.lin1 = nn.Linear(input_dim, hidden_dim)
+        self.act1 = nn.ReLU()
+        self.lin2 = nn.Linear(hidden_dim, hidden_dim)
+        self.act2 = nn.ReLU()
+        self.lin3 = nn.Linear(hidden_dim, action_dim)
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         """Return action logits for a batch of encoded states."""
 
-        return self.network(state)
+        x = self.lin1(state)
+        x = self.act1(x)
+        x = self.lin2(x)
+        x = self.act2(x)
+        x = self.lin3(x)
+        return x
