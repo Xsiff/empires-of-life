@@ -10,7 +10,7 @@ class DirectionPolicy(nn.Module):
     """Predicts action preferences for moving an agent on the grid."""
 
     def __init__(
-        self, input_dim: int = 10, hidden_dim: int = 64, action_dim: int = 4
+        self, input_dim: int = 8, hidden_dim: int = 64, action_dim: int = 4
     ) -> None:
         super().__init__()
         self.lin1 = nn.Linear(input_dim, hidden_dim)

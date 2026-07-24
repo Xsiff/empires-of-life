@@ -1,80 +1,83 @@
-"""Random environment generation for grid-based simulations."""
+"""Random environment generation for 2D environments."""
 
 from __future__ import annotations
 
-from enum import Enum
 import random
 
-
-class CellType(Enum):
-    """Supported cell contents for the environment grid."""
-
-    EMPTY = 0
-    OBSTACLE = 1
-    AGENT = 2
-    TARGET = 3
-
-
-class Environment:
-    """Generated environment state."""
-
-    def __init__(
-        self,
-        size: int,
-        agent_position: tuple[int, int],
-        target_position: tuple[int, int],
-        obstacle_positions: tuple[tuple[int, int], ...],
-    ) -> None:
-
-        self.size = size
-        self.agent_position = agent_position
-        self.target_position = target_position
-        self.obstacle_positions = obstacle_positions
-        self.grid: list[list[CellType]]
-
-        self._is_generated: bool = False
-
-    def generate_grid(self) -> None:
-        """Generate a grid representation of the environment."""
-
-        grid = [[CellType.EMPTY for _ in range(self.size)] for _ in range(self.size)]
-        agent_pos_x, agent_pos_y = self.agent_position
-        target_pos_x, target_pos_y = self.target_position
-
-        grid[agent_pos_x][agent_pos_y] = CellType.AGENT
-        grid[target_pos_x][target_pos_y] = CellType.TARGET
-
-        for pos_x, pos_y in self.obstacle_positions:
-            grid[pos_x][pos_y] = CellType.OBSTACLE
-
-        self.grid = grid
-        self._is_generated = True
+from .agent import Agent2D
+from .environment import Environment, Position
 
 
 class RandomEnvironmentGenerator:
-    """Generates square grid environments with randomized contents."""
+    """Generates randomized 2D environments with non-overlapping placements."""
 
     def __init__(
-        self, size: int, obstacle_count: int = 0, seed: int | None = None
+        self,
+        size: int | None = None,
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        agent_count: int = 1,
+        obstacle_count: int = 0,
+        seed: int | None = None,
     ) -> None:
+        if size is not None:
+            if width is None:
+                width = size
+            if height is None:
+                height = size
 
-        self.size = size
+        if width is None or height is None:
+            raise ValueError("Generator requires width/height or a square size.")
+        if width <= 0 or height <= 0:
+            raise ValueError("Generator width and height must be positive.")
+        if agent_count <= 0:
+            raise ValueError("Generator must create at least one agent.")
+        if obstacle_count < 0:
+            raise ValueError("Obstacle count cannot be negative.")
+
+        self.width = width
+        self.height = height
+        self.size = width
+        self.agent_count = agent_count
         self.obstacle_count = obstacle_count
         self._random = random.Random(seed)
 
-    def generate_environment(self) -> Environment:
-        """Generate a new environment with random non-overlapping placements."""
+    @property
+    def total_cells(self) -> int:
+        """Return the number of cells in the generator's 2D area."""
 
-        positions = [(row, col) for row in range(self.size) for col in range(self.size)]
-        selected_positions = self._random.sample(positions, k=self.obstacle_count + 2)
+        return self.width * self.height
 
-        agent_pos_x, agent_pos_y = selected_positions[0]
-        target_pos_x, target_pos_y = selected_positions[1]
-        obstacle_positions = tuple(selected_positions[2:])
+    def _sample_positions(self, count: int) -> list[Position]:
+        """Sample unique in-bounds positions from the environment area."""
 
-        return Environment(
-            size=self.size,
-            agent_position=(agent_pos_x, agent_pos_y),
-            target_position=(target_pos_x, target_pos_y),
+        if count > self.total_cells:
+            raise ValueError("Requested entities exceed available grid cells.")
+
+        positions = [
+            (row, col)
+            for row in range(self.height)
+            for col in range(self.width)
+        ]
+        return self._random.sample(positions, k=count)
+
+    def generate_environment(self) -> tuple[Environment, set[Agent2D]]:
+        """Generate a new environment and the agents placed inside it."""
+
+        selection_size = self.agent_count + 1 + self.obstacle_count
+        selected_positions = self._sample_positions(selection_size)
+        agents = {
+            Agent2D(position) for position in selected_positions[: self.agent_count]
+        }
+        target_position = selected_positions[self.agent_count]
+        obstacle_positions = tuple(selected_positions[self.agent_count + 1 :])
+
+        environment = Environment(
+            width=self.width,
+            height=self.height,
+            agents=agents,
+            target_position=target_position,
             obstacle_positions=obstacle_positions,
         )
+        return environment, agents

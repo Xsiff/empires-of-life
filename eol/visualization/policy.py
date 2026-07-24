@@ -107,7 +107,7 @@ def visualize_policy(
 ) -> bool:
     """Run one greedy episode and print the grid after each move."""
 
-    environment = environment_generator.generate_environment()
+    environment, _ = environment_generator.generate_environment()
     obstacle_positions = set(environment.obstacle_positions)
     agent_position = environment.agent_position
     visited_positions = {agent_position}

@@ -7,7 +7,7 @@ name = "empires-of-life"
 version = "0.1.0"
 description = "Minimlaistic empire simulator trained with RL"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "sts2-cli contributors" }]
 dependencies = [
