@@ -20,7 +20,7 @@ class Agent2D:
 
     def __init__(self, position: tuple[int, int], team: int = 0) -> None:
         self.position = position
-        self.team = 0
+        self.team = team
 
     def next_step_position(self, action: Action) -> tuple[int, int]:
         """Return the next position for a proposed action."""

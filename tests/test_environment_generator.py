@@ -24,6 +24,47 @@ def agent_at(environment: Environment, position: tuple[int, int]):
     raise AssertionError(f"No agent at position {position!r}")
 
 
+def test_agent_preserves_passed_team_value() -> None:
+    agent = Agent2D((1, 2), team=3)
+
+    assert agent.position == (1, 2)
+    assert agent.team == 3
+
+
+def test_environment_preserves_agent_team_assignments() -> None:
+    environment = Environment(
+        width=4,
+        height=4,
+        agents={Agent2D((0, 0), team=1), Agent2D((1, 1), team=2)},
+        target_position=(3, 3),
+        obstacle_positions=(),
+    )
+
+    teams_by_position = {agent.position: agent.team for agent in environment.agents}
+
+    assert teams_by_position == {(0, 0): 1, (1, 1): 2}
+    assert environment.agent_positions[(0, 0)].team == 1
+    assert environment.agent_positions[(1, 1)].team == 2
+
+
+def test_delete_agents_removes_multiple_agents() -> None:
+    environment = Environment(
+        width=4,
+        height=4,
+        agents={Agent2D((0, 0)), Agent2D((1, 1)), Agent2D((2, 2))},
+        target_position=(3, 3),
+        obstacle_positions=(),
+    )
+
+    environment.delete_agents(
+        (agent_at(environment, (1, 1)), agent_at(environment, (2, 2)))
+    )
+
+    assert agent_positions(environment) == {(0, 0)}
+    assert environment.grid[1][1] is CellType.EMPTY
+    assert environment.grid[2][2] is CellType.EMPTY
+
+
 def test_generator_creates_expected_rectangular_grid_shape() -> None:
     environment, agents = RandomEnvironmentGenerator(
         width=5,
@@ -56,6 +97,37 @@ def test_generator_places_requested_agents_target_and_obstacles() -> None:
     assert agents == environment.agents
 
 
+def test_generator_int_agent_count_creates_one_team() -> None:
+    environment, agents = RandomEnvironmentGenerator(
+        width=6,
+        height=6,
+        agent_count=6,
+        obstacle_count=2,
+        seed=5,
+    ).generate_environment()
+
+    assert len(agents) == 6
+    assert environment.agents == agents
+    assert {agent.team for agent in agents} == {1}
+
+
+def test_generator_list_agent_count_creates_multiple_teams() -> None:
+    environment, agents = RandomEnvironmentGenerator(
+        width=6,
+        height=6,
+        agent_count=[2, 3],
+        obstacle_count=2,
+        seed=13,
+    ).generate_environment()
+
+    teams = [agent.team for agent in agents]
+
+    assert len(agents) == 5
+    assert environment.agents == agents
+    assert teams.count(1) == 2
+    assert teams.count(2) == 3
+
+
 def test_generator_keeps_positions_unique() -> None:
     environment, _ = RandomEnvironmentGenerator(
         width=4,
@@ -86,6 +158,11 @@ def test_generator_rejects_invalid_configuration() -> None:
         ValueError, match="Requested entities exceed available grid cells."
     ):
         generator.generate_environment()
+
+
+def test_generator_rejects_invalid_team_counts() -> None:
+    with pytest.raises(ValueError, match="Each team must contain at least one agent."):
+        RandomEnvironmentGenerator(width=4, height=4, agent_count=[2, 0], seed=1)
 
 
 def test_environment_rejects_overlapping_layout() -> None:
@@ -124,6 +201,8 @@ def test_move_agent_succeeds_for_open_cell() -> None:
     environment.move_agent((first_agent(environment), Action.DOWN))
 
     assert agent_positions(environment) == {(2, 1)}
+    assert (1, 1) not in environment.agent_positions
+    assert environment.agent_positions[(2, 1)].position == (2, 1)
     assert environment.grid[1][1] is CellType.EMPTY
     assert environment.grid[2][1] is CellType.AGENT
 
@@ -184,6 +263,7 @@ def test_create_agent_adds_agent_to_existing_environment() -> None:
 
     assert created_agent in environment.agents
     assert agent_positions(environment) == {(0, 0), (2, 2)}
+    assert environment.agent_positions[(2, 2)] is created_agent
     assert environment.grid[2][2] is CellType.AGENT
 
 
@@ -214,10 +294,11 @@ def test_delete_agent_removes_agent_from_existing_environment() -> None:
 
     assert deleted_agent is None
     assert agent_positions(environment) == {(0, 0)}
+    assert (2, 2) not in environment.agent_positions
     assert environment.grid[2][2] is CellType.EMPTY
 
 
-def test_delete_agent_rejects_removing_last_agent() -> None:
+def test_delete_agent_allows_removing_last_agent() -> None:
     environment = Environment(
         width=4,
         height=4,
@@ -226,5 +307,60 @@ def test_delete_agent_rejects_removing_last_agent() -> None:
         obstacle_positions=(),
     )
 
-    with pytest.raises(ValueError, match="Environment must contain at least one agent."):
-        environment.delete_agent(first_agent(environment))
+    deleted_agent = first_agent(environment)
+    result = environment.delete_agent(deleted_agent)
+
+    assert result is None
+    assert environment.agents == set()
+    assert environment.grid[0][0] is CellType.EMPTY
+
+
+def test_agents_ruleset_keeps_same_team_agents_alive() -> None:
+    environment = Environment(
+        width=4,
+        height=4,
+        agents={Agent2D((1, 1), team=1), Agent2D((1, 2), team=1)},
+        target_position=(3, 3),
+        obstacle_positions=(),
+    )
+
+    environment.agents_ruleset()
+
+    assert agent_positions(environment) == {(1, 1), (1, 2)}
+
+
+def test_agents_ruleset_keeps_agents_with_one_enemy_neighbor() -> None:
+    environment = Environment(
+        width=4,
+        height=4,
+        agents={Agent2D((1, 1), team=1), Agent2D((1, 2), team=2)},
+        target_position=(3, 3),
+        obstacle_positions=(),
+    )
+
+    environment.agents_ruleset()
+
+    assert agent_positions(environment) == {(1, 1), (1, 2)}
+    assert set(environment.agent_positions) == {(1, 1), (1, 2)}
+    assert environment.grid[1][1] is CellType.AGENT
+    assert environment.grid[1][2] is CellType.AGENT
+
+
+def test_agents_ruleset_deletes_agent_with_two_enemy_neighbors() -> None:
+    environment = Environment(
+        width=5,
+        height=5,
+        agents={
+            Agent2D((2, 2), team=1),
+            Agent2D((2, 1), team=2),
+            Agent2D((2, 3), team=2),
+        },
+        target_position=(4, 4),
+        obstacle_positions=(),
+    )
+
+    environment.agents_ruleset()
+
+    assert agent_positions(environment) == {(2, 1), (2, 3)}
+    assert (2, 2) not in environment.agent_positions
+    assert environment.grid[2][2] is CellType.EMPTY

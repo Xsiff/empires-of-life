@@ -42,15 +42,23 @@ class Environment:
         self.target_position = target_position
         self.obstacle_positions = set(obstacle_positions)
         self.agents = set(agents)
+        self.agent_positions: dict[Position, Agent2D] = {}
         self._validate_layout()
+        self._refresh_agent_positions()
         self.grid: list[list[CellType]] = self._generate_grid()
-
 
     @property
     def obstacle_set(self) -> set[Position]:
         """Return the obstacle positions as a set for fast membership checks."""
 
         return set(self.obstacle_positions)
+
+    def _refresh_agent_positions(self) -> None:
+        """Rebuild the O(1) position-to-agent lookup."""
+
+        self.agent_positions = {
+            agent.position: agent for agent in self.agents
+        }
 
     def _validate_layout(self) -> None:
         """Validate that the initial environment layout is internally consistent."""
@@ -70,6 +78,10 @@ class Environment:
         for agent in self.agents:
             if not self.in_bounds(agent.position):
                 raise ValueError("Agent positions must be within environment bounds.")
+
+        agent_positions = [agent.position for agent in self.agents]
+        if len(set(agent_positions)) != len(agent_positions):
+            raise ValueError("Agent positions must be unique.")
 
         if len(self.obstacle_set) != len(self.obstacle_positions):
             raise ValueError("Obstacle positions must be unique.")
@@ -118,6 +130,49 @@ class Environment:
         row, col = position
         return 0 <= row < self.height and 0 <= col < self.width
 
+    def agents_ruleset(self):
+        """Apply the current proximity-based combat rules."""
+
+        deleted_agents: set[Agent2D] = set()
+        for agent in self.agents:
+            agent_surroundings = self.observe_surroundings(agent)
+            enemy_count = 0
+            for action, cell in agent_surroundings.items():
+                if cell == CellType.AGENT:
+                    nearby_position = agent.next_step_position(action)
+                    nearby_agent = self.agent_positions.get(nearby_position)
+                    if nearby_agent is not None and nearby_agent.team != agent.team:
+                        enemy_count += 1
+            if enemy_count >= 2:
+                deleted_agents.add(agent)
+
+        self.delete_agents(deleted_agents)
+
+        deleted_agents = set()
+        for agent in self.agents:
+            agent_surroundings = self.observe_surroundings(agent)
+            enemy_count = 0
+            for action, cell in agent_surroundings.items():
+                if cell == CellType.AGENT:
+                    nearby_position = agent.next_step_position(action)
+                    nearby_agent = self.agent_positions.get(nearby_position)
+                    if nearby_agent is not None and nearby_agent.team != agent.team:
+                        enemy_count += 1
+            if enemy_count >= 2:
+                deleted_agents.add(agent)
+
+        self.delete_agents(deleted_agents)
+
+    def delete_agents(self, agents: Iterable[Agent2D]) -> None:
+        """Delete multiple existing agents from the current environment."""
+
+        unique_agents = set(agents)
+        if not unique_agents:
+            return
+
+        for agent in unique_agents:
+            self.delete_agent(agent)
+
     def observe_surroundings(self, agent: Agent2D) -> dict[Action, CellType]:
         """Return the four neighboring cells around the given agent."""
 
@@ -151,7 +206,9 @@ class Environment:
         agent, move = action
         x, y = agent.position
         next_x, next_y = agent.next_step_position(move)
+        del self.agent_positions[(x, y)]
         agent.move_to((next_x, next_y))
+        self.agent_positions[(next_x, next_y)] = agent
         self.grid[x][y] = CellType.EMPTY
         self.grid[next_x][next_y] = CellType.AGENT
 
@@ -161,6 +218,7 @@ class Environment:
         self._ensure_agent_position_is_available(position)
         agent = Agent2D(position)
         self.agents.add(agent)
+        self.agent_positions[position] = agent
 
         row, col = position
         self.grid[row][col] = CellType.AGENT
@@ -169,12 +227,10 @@ class Environment:
     def delete_agent(self, agent: Agent2D) -> None:
         """Delete an existing agent from the current environment."""
 
-        if len(self.agents) == 1:
-            raise ValueError("Environment must contain at least one agent.")
-
         if agent not in self.agents:
             raise ValueError("Agent does not belong to this environment.")
 
         row, col = agent.position
         self.agents.remove(agent)
+        self.agent_positions.pop((row, col), None)
         self.grid[row][col] = CellType.EMPTY

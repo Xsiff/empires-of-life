@@ -17,7 +17,7 @@ class RandomEnvironmentGenerator:
         *,
         width: int | None = None,
         height: int | None = None,
-        agent_count: int = 1,
+        agent_count: int | list[int] = 1,
         obstacle_count: int = 0,
         seed: int | None = None,
     ) -> None:
@@ -31,17 +31,35 @@ class RandomEnvironmentGenerator:
             raise ValueError("Generator requires width/height or a square size.")
         if width <= 0 or height <= 0:
             raise ValueError("Generator width and height must be positive.")
-        if agent_count <= 0:
-            raise ValueError("Generator must create at least one agent.")
         if obstacle_count < 0:
             raise ValueError("Obstacle count cannot be negative.")
 
         self.width = width
         self.height = height
         self.size = width
-        self.agent_count = agent_count
+        self.team_agent_counts = self._normalize_agent_count(agent_count)
         self.obstacle_count = obstacle_count
         self._random = random.Random(seed)
+
+    def _normalize_agent_count(self, agent_count: int | list[int]) -> tuple[int, ...]:
+        """Normalize one-team or per-team agent counts into a validated tuple."""
+
+        if isinstance(agent_count, int):
+            if agent_count <= 0:
+                raise ValueError("Generator must create at least one agent.")
+            return (agent_count,)
+
+        if not agent_count:
+            raise ValueError("Generator must create at least one team.")
+        if any(count <= 0 for count in agent_count):
+            raise ValueError("Each team must contain at least one agent.")
+        return tuple(agent_count)
+
+    @property
+    def agent_count(self) -> int:
+        """Return the total number of generated agents."""
+
+        return sum(self.team_agent_counts)
 
     @property
     def total_cells(self) -> int:
@@ -67,9 +85,14 @@ class RandomEnvironmentGenerator:
 
         selection_size = self.agent_count + 1 + self.obstacle_count
         selected_positions = self._sample_positions(selection_size)
-        agents = {
-            Agent2D(position) for position in selected_positions[: self.agent_count]
-        }
+        agents: set[Agent2D] = set()
+        offset = 0
+        for team_index, team_count in enumerate(self.team_agent_counts, start=1):
+            team_positions = selected_positions[offset : offset + team_count]
+            agents.update(
+                Agent2D(position, team=team_index) for position in team_positions
+            )
+            offset += team_count
         target_position = selected_positions[self.agent_count]
         obstacle_positions = tuple(selected_positions[self.agent_count + 1 :])
 
