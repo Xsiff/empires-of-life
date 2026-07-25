@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from eol.micro.reward import RewardConfig
-from eol.micro.train import TrainingConfig, train_policy
+from eol.micro.train import TrainingConfig, evaluate_policy, train_policy
 from eol.visualization import visualize_multiple_environments
 
 
@@ -43,14 +42,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=TrainingConfig.print_every,
     )
     train_parser.add_argument(
-        "--demo-sleep-seconds",
-        type=float,
-        default=TrainingConfig.demo_sleep_seconds,
+        "--evaluation-episodes",
+        type=int,
+        default=TrainingConfig.evaluation_episodes,
     )
     train_parser.add_argument(
-        "--demo-environment-count",
+        "--visualization-episodes",
         type=int,
-        default=TrainingConfig.demo_environment_count,
+        default=TrainingConfig.visualization_episodes,
+    )
+    train_parser.add_argument(
+        "--visualization-sleep-seconds",
+        type=float,
+        default=TrainingConfig.visualization_sleep_seconds,
     )
     return parser
 
@@ -68,11 +72,24 @@ def run_training_pipeline(args: argparse.Namespace) -> None:
         gamma=args.gamma,
         seed=args.seed,
         print_every=args.print_every,
-        demo_sleep_seconds=args.demo_sleep_seconds,
-        demo_environment_count=args.demo_environment_count,
+        evaluation_episodes=args.evaluation_episodes,
+        visualization_episodes=args.visualization_episodes,
+        visualization_sleep_seconds=args.visualization_sleep_seconds,
     )
-    policy = train_policy(config=training_config, reward_config=RewardConfig())
-    visualize_multiple_environments(policy=policy, config=training_config)
+    policy = train_policy(config=training_config)
+    results = evaluate_policy(policy=policy, config=training_config)
+    successes = sum(results)
+    print(
+        f"Evaluation summary: reached target in "
+        f"{successes}/{len(results)} environments."
+    )
+    if training_config.visualization_episodes > 0:
+        visualize_multiple_environments(
+            policy=policy,
+            config=training_config,
+            episodes=training_config.visualization_episodes,
+            sleep_seconds=training_config.visualization_sleep_seconds,
+        )
 
 
 def main() -> None:

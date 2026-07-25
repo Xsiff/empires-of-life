@@ -1,13 +1,36 @@
 """Micro-scale RL training components."""
 
 from .model import DirectionPolicy
-from .reward import RewardConfig, compute_reward
-from .train import TrainingConfig, train_policy
+from .reward import Reward, compute_reward
+from .train import (
+    EpisodeStep,
+    EpisodeTrajectory,
+    TrainMetrics,
+    TrainingConfig,
+    collect_episode,
+    discounted_returns,
+    encode_state,
+    evaluate_policy,
+    get_valid_action_mask,
+    mask_action_logits,
+    select_action,
+    train_policy,
+)
 
 __all__ = [
     "DirectionPolicy",
-    "RewardConfig",
+    "EpisodeStep",
+    "EpisodeTrajectory",
+    "Reward",
+    "TrainMetrics",
     "TrainingConfig",
+    "collect_episode",
     "compute_reward",
+    "discounted_returns",
+    "encode_state",
+    "evaluate_policy",
+    "get_valid_action_mask",
+    "mask_action_logits",
+    "select_action",
     "train_policy",
 ]
