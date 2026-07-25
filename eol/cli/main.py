@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 
-from eol.micro.train import TrainingConfig, evaluate_policy, train_policy
+from eol.micro.inference import evaluate_policy
+from eol.micro.train import TrainingConfig, train_policy
 from eol.visualization import visualize_multiple_environments
 
 

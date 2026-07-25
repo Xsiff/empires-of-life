@@ -1,6 +1,7 @@
 import torch
 
 from eol.environment import Action, Agent2D, Environment
+from eol.micro.inference import evaluate_policy
 from eol.micro.model import DirectionPolicy
 from eol.micro.reward import compute_reward
 from eol.micro.train import (
@@ -9,7 +10,6 @@ from eol.micro.train import (
     collect_episode,
     discounted_returns,
     encode_state,
-    evaluate_policy,
     get_valid_action_mask,
     mask_action_logits,
     select_action,

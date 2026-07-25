@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import time
 
-import torch
-
-from eol.environment import Agent2D, CellType, Environment, RandomEnvironmentGenerator
+from eol.environment import CellType, Environment, RandomEnvironmentGenerator
+from eol.micro.inference import select_greedy_action
 from eol.micro.model import DirectionPolicy
 from eol.micro.train import (
     TrainingConfig,
-    encode_state,
-    get_valid_action_mask,
-    mask_action_logits,
     ACTION_SPACE,
 )
 
@@ -37,20 +33,6 @@ def render_grid(grid: list[list[CellType]]) -> str:
     return "\n".join(" ".join(symbols[cell] for cell in row) for row in grid)
 
 
-def select_greedy_action(
-    policy: DirectionPolicy,
-    environment: Environment,
-    agent: Agent2D,
-) -> int:
-    """Choose the highest-scoring action for visualization/evaluation."""
-
-    state = encode_state(environment, agent).unsqueeze(0)
-    valid_action_mask = get_valid_action_mask(environment, agent)
-    with torch.no_grad():
-        logits = mask_action_logits(policy(state), valid_action_mask)
-    return int(torch.argmax(logits, dim=1).item())
-
-
 def visualize_policy(
     policy: DirectionPolicy,
     environment_generator: RandomEnvironmentGenerator,
@@ -70,7 +52,11 @@ def visualize_policy(
             print(f"Target reached in {step - 1} steps.")
             return True
 
-        action_index = select_greedy_action(policy=policy, environment=environment, agent=agent)
+        action_index = select_greedy_action(
+            policy=policy,
+            environment=environment,
+            agent=agent,
+        )
         action = ACTION_SPACE[action_index]
         environment.move_agent((agent, action))
 

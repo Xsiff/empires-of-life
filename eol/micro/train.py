@@ -230,41 +230,6 @@ def discounted_returns(
     return torch.tensor(returns, dtype=torch.float32)
 
 
-def evaluate_policy(
-    policy: torch.nn.Module,
-    config: TrainingConfig,
-    *,
-    episodes: int | None = None,
-) -> list[bool]:
-    """Run greedy evaluation episodes on fresh environments."""
-
-    evaluation_count = config.evaluation_episodes if episodes is None else episodes
-    results: list[bool] = []
-    for episode_index in range(evaluation_count):
-        generator = RandomEnvironmentGenerator(
-            size=config.grid_size,
-            obstacle_count=config.obstacle_count,
-            seed=config.seed + 10_000 + episode_index,
-        )
-        environment, (agent, ) = generator.generate_environment()
-
-        for _ in range(config.max_steps):
-            if agent.position == environment.target_position:
-                results.append(True)
-                break
-
-            state = encode_state(environment, agent).unsqueeze(0)
-            valid_action_mask = get_valid_action_mask(environment, agent)
-            with torch.no_grad():
-                logits = mask_action_logits(policy(state), valid_action_mask)
-            action_index = int(torch.argmax(logits, dim=1).item())
-            environment.move_agent((agent, ACTION_SPACE[action_index]))
-        else:
-            results.append(agent.position == environment.target_position)
-
-    return results
-
-
 def _build_metrics(
     episode_index: int, trajectory: EpisodeTrajectory
 ) -> TrainMetrics:
