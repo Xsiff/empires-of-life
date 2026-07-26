@@ -74,9 +74,7 @@ class RandomEnvironmentGenerator:
             raise ValueError("Requested entities exceed available grid cells.")
 
         positions = [
-            (row, col)
-            for row in range(self.height)
-            for col in range(self.width)
+            (row, col) for row in range(self.height) for col in range(self.width)
         ]
         return self._random.sample(positions, k=count)
 

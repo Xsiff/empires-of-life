@@ -20,7 +20,7 @@ class CellType(Enum):
     TARGET = 3
 
     def is_occupied(self):
-        return (self.value == 1 or self.value == 2)
+        return self.value == 1 or self.value == 2
 
 
 class Environment:
@@ -56,9 +56,7 @@ class Environment:
     def _refresh_agent_positions(self) -> None:
         """Rebuild the O(1) position-to-agent lookup."""
 
-        self.agent_positions = {
-            agent.position: agent for agent in self.agents
-        }
+        self.agent_positions = {agent.position: agent for agent in self.agents}
 
     def _validate_layout(self) -> None:
         """Validate that the initial environment layout is internally consistent."""
@@ -98,10 +96,7 @@ class Environment:
     def _generate_grid(self) -> list[list[CellType]]:
         """Build a grid view derived from the current environment state."""
 
-        grid = [
-            [CellType.EMPTY for _ in range(self.width)]
-            for _ in range(self.height)
-        ]
+        grid = [[CellType.EMPTY for _ in range(self.width)] for _ in range(self.height)]
         target_row, target_col = self.target_position
         grid[target_row][target_col] = CellType.TARGET
 

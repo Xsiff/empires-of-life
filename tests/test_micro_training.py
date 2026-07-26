@@ -5,6 +5,7 @@ from eol.micro.inference import evaluate_policy
 from eol.micro.model import DirectionPolicy
 from eol.micro.reward import compute_reward
 from eol.micro.train import (
+    EpisodeStep,
     EpisodeTrajectory,
     TrainingConfig,
     collect_episode,
@@ -15,6 +16,12 @@ from eol.micro.train import (
     select_action,
     train_policy,
 )
+
+
+class RightOnlyPolicy(DirectionPolicy):
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        del state
+        return torch.tensor([[-10.0, -10.0, -10.0, 10.0, -10.0]], dtype=torch.float32)
 
 
 def test_encode_state_returns_expected_shape_and_dtype() -> None:
@@ -84,12 +91,7 @@ def test_collect_episode_reaches_target_with_deterministic_policy() -> None:
         obstacle_positions=(),
     )
     agent = next(iter(environment.agents))
-    policy = DirectionPolicy(input_dim=11, hidden_dim=8, action_dim=5)
-
-    def forward_override(_state: torch.Tensor) -> torch.Tensor:
-        return torch.tensor([[-10.0, -10.0, -10.0, 10.0, -10.0]], dtype=torch.float32)
-
-    policy.forward = forward_override  # type: ignore[method-assign]
+    policy = RightOnlyPolicy(input_dim=11, hidden_dim=8, action_dim=5)
 
     trajectory = collect_episode(policy, environment, agent, max_steps=4)
 
@@ -164,9 +166,39 @@ def test_reward_improves_when_agent_moves_closer() -> None:
 def test_discounted_returns_computes_expected_sequence() -> None:
     trajectory = EpisodeTrajectory(
         steps=(
-            type("Step", (), {"reward": 1.0})(),
-            type("Step", (), {"reward": 2.0})(),
-            type("Step", (), {"reward": 3.0})(),
+            EpisodeStep(
+                state=torch.zeros(11),
+                valid_action_mask=torch.ones(5),
+                action_index=0,
+                action=Action.UP,
+                log_prob=torch.tensor(0.0),
+                reward=1.0,
+                done=False,
+                position_before=(0, 0),
+                position_after=(0, 0),
+            ),
+            EpisodeStep(
+                state=torch.zeros(11),
+                valid_action_mask=torch.ones(5),
+                action_index=0,
+                action=Action.UP,
+                log_prob=torch.tensor(0.0),
+                reward=2.0,
+                done=False,
+                position_before=(0, 0),
+                position_after=(0, 0),
+            ),
+            EpisodeStep(
+                state=torch.zeros(11),
+                valid_action_mask=torch.ones(5),
+                action_index=0,
+                action=Action.UP,
+                log_prob=torch.tensor(0.0),
+                reward=3.0,
+                done=True,
+                position_before=(0, 0),
+                position_after=(0, 0),
+            ),
         ),
         total_reward=6.0,
         reached_target=False,

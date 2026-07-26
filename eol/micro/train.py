@@ -91,7 +91,9 @@ def encode_state(environment: Environment, agent: Agent2D) -> torch.Tensor:
 
     blocked_features = []
     for action in ACTION_SPACE:
-        blocked_features.append(0.0 if environment.can_move_to((agent, action)) else 1.0)
+        blocked_features.append(
+            0.0 if environment.can_move_to((agent, action)) else 1.0
+        )
 
     return torch.tensor(
         [
@@ -217,9 +219,7 @@ def collect_episode(
     )
 
 
-def discounted_returns(
-    trajectory: EpisodeTrajectory, gamma: float
-) -> torch.Tensor:
+def discounted_returns(trajectory: EpisodeTrajectory, gamma: float) -> torch.Tensor:
     """Compute discounted returns for the collected trajectory."""
 
     returns: list[float] = []
@@ -231,9 +231,7 @@ def discounted_returns(
     return torch.tensor(returns, dtype=torch.float32)
 
 
-def _build_metrics(
-    episode_index: int, trajectory: EpisodeTrajectory
-) -> TrainMetrics:
+def _build_metrics(episode_index: int, trajectory: EpisodeTrajectory) -> TrainMetrics:
     return TrainMetrics(
         episode_index=episode_index,
         total_reward=trajectory.total_reward,

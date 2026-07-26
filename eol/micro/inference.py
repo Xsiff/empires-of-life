@@ -5,7 +5,6 @@ from __future__ import annotations
 import torch
 
 from eol.environment import Agent2D, Environment, RandomEnvironmentGenerator
-from eol.micro.model import DirectionPolicy
 from eol.micro.train import (
     ACTION_SPACE,
     TrainingConfig,
@@ -16,7 +15,7 @@ from eol.micro.train import (
 
 
 def select_greedy_action(
-    policy: DirectionPolicy,
+    policy: torch.nn.Module,
     environment: Environment,
     agent: Agent2D,
 ) -> int:

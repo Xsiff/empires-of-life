@@ -1,12 +1,12 @@
 """ASCII visualization for trained policy rollouts."""
 
 from __future__ import annotations
+import torch
 
 import time
 
 from eol.environment import CellType, Environment, RandomEnvironmentGenerator
 from eol.micro.inference import select_greedy_action
-from eol.micro.model import DirectionPolicy
 from eol.micro.train import (
     TrainingConfig,
     ACTION_SPACE,
@@ -34,7 +34,7 @@ def render_grid(grid: list[list[CellType]]) -> str:
 
 
 def visualize_policy(
-    policy: DirectionPolicy,
+    policy: torch.nn.Module,
     environment_generator: RandomEnvironmentGenerator,
     max_steps: int,
     sleep_seconds: float = 0.25,
@@ -76,7 +76,7 @@ def visualize_policy(
 
 
 def visualize_multiple_environments(
-    policy: DirectionPolicy,
+    policy: torch.nn.Module,
     config: TrainingConfig,
     *,
     episodes: int | None = None,
@@ -85,13 +85,9 @@ def visualize_multiple_environments(
     """Show greedy rollouts for several post-training environments."""
 
     results: list[bool] = []
-    environment_count = (
-        config.visualization_episodes if episodes is None else episodes
-    )
+    environment_count = config.visualization_episodes if episodes is None else episodes
     delay = (
-        config.visualization_sleep_seconds
-        if sleep_seconds is None
-        else sleep_seconds
+        config.visualization_sleep_seconds if sleep_seconds is None else sleep_seconds
     )
 
     for environment_index in range(environment_count):
@@ -101,10 +97,7 @@ def visualize_multiple_environments(
             seed=config.seed + 1 + environment_index,
         )
         print("")
-        print(
-            f"=== Demo Environment {environment_index + 1}/"
-            f"{environment_count} ==="
-        )
+        print(f"=== Demo Environment {environment_index + 1}/{environment_count} ===")
         reached_target = visualize_policy(
             policy=policy,
             environment_generator=demo_generator,
@@ -116,7 +109,6 @@ def visualize_multiple_environments(
     successes = sum(results)
     print("")
     print(
-        f"Demo summary: reached target in {successes}/"
-        f"{environment_count} environments."
+        f"Demo summary: reached target in {successes}/{environment_count} environments."
     )
     return results

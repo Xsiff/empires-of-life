@@ -114,7 +114,9 @@ def stagnation(
 
     previous_distance = _target_distance(position_before, environment.target_position)
     current_distance = _target_distance(agent.position, environment.target_position)
-    no_progress = agent.position == position_before or current_distance >= previous_distance
+    no_progress = (
+        agent.position == position_before or current_distance >= previous_distance
+    )
     return float(no_progress)
 
 
