@@ -131,18 +131,28 @@ def mask_action_logits(
     return masked_logits.masked_fill(invalid_mask, torch.finfo(logits.dtype).min)
 
 
+def resolve_action(
+    environment: Environment, agent: Agent2D, action_index: int
+) -> Action:
+    """Resolve a suggested action to an executable action."""
+
+    suggested_action = ACTION_SPACE[action_index]
+    if environment.can_move_to((agent, suggested_action)):
+        return suggested_action
+    return Action.HALT
+
+
 def select_action(
     policy: torch.nn.Module,
     environment: Environment,
     agent: Agent2D,
 ) -> tuple[int, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Sample one valid action from the policy for the given agent."""
+    """Sample one action from the policy for the given agent."""
 
     state = encode_state(environment, agent)
     valid_action_mask = get_valid_action_mask(environment, agent)
     logits = policy(state.unsqueeze(0))
-    masked_logits = mask_action_logits(logits, valid_action_mask)
-    distribution = Categorical(logits=masked_logits)
+    distribution = Categorical(logits=logits)
     action_index = int(distribution.sample().item())
     log_prob = distribution.log_prob(torch.tensor(action_index)).squeeze(0)
     return action_index, log_prob, state, valid_action_mask
@@ -173,7 +183,7 @@ def collect_episode(
         action_index, log_prob, state, valid_action_mask = select_action(
             policy, environment, agent
         )
-        action = ACTION_SPACE[action_index]
+        action = resolve_action(environment, agent, action_index)
         position_before = agent.position
         environment.move_agent((agent, action))
         reached_target = agent.position == environment.target_position

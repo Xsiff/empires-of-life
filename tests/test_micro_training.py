@@ -1,7 +1,7 @@
 import torch
 
 from eol.environment import Action, Agent2D, Environment
-from eol.micro.inference import evaluate_policy
+from eol.micro.inference import evaluate_policy, select_greedy_action
 from eol.micro.model import DirectionPolicy
 from eol.micro.reward import compute_reward
 from eol.micro.train import (
@@ -13,6 +13,7 @@ from eol.micro.train import (
     encode_state,
     get_valid_action_mask,
     mask_action_logits,
+    resolve_action,
     select_action,
     train_policy,
 )
@@ -22,6 +23,12 @@ class RightOnlyPolicy(DirectionPolicy):
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         del state
         return torch.tensor([[-10.0, -10.0, -10.0, 10.0, -10.0]], dtype=torch.float32)
+
+
+class DownOnlyPolicy(DirectionPolicy):
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        del state
+        return torch.tensor([[-10.0, 10.0, -10.0, -10.0, -10.0]], dtype=torch.float32)
 
 
 def test_encode_state_returns_expected_shape_and_dtype() -> None:
@@ -78,7 +85,7 @@ def test_select_action_returns_valid_index_and_state() -> None:
 
     assert state.shape == (11,)
     assert valid_action_mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0]
-    assert action_index in {3, 4}
+    assert 0 <= action_index < 5
     assert log_prob.ndim == 0
 
 
@@ -103,6 +110,20 @@ def test_collect_episode_reaches_target_with_deterministic_policy() -> None:
     assert agent.position == (0, 2)
 
 
+def test_resolve_action_falls_back_to_halt_for_blocked_move() -> None:
+    environment = Environment(
+        width=3,
+        height=3,
+        agents={Agent2D((0, 0))},
+        target_position=(2, 2),
+        obstacle_positions={(1, 0)},
+    )
+    agent = next(iter(environment.agents))
+
+    assert resolve_action(environment, agent, 1) is Action.HALT
+    assert resolve_action(environment, agent, 3) is Action.RIGHT
+
+
 def test_collect_episode_counts_halt_when_it_is_the_only_valid_action() -> None:
     environment = Environment(
         width=2,
@@ -120,6 +141,22 @@ def test_collect_episode_counts_halt_when_it_is_the_only_valid_action() -> None:
     assert all(step.action is Action.HALT for step in trajectory.steps)
     assert trajectory.reached_target is False
     assert trajectory.termination_reason == "max_steps"
+
+
+def test_select_greedy_action_returns_halt_for_blocked_suggestion() -> None:
+    environment = Environment(
+        width=3,
+        height=3,
+        agents={Agent2D((0, 0))},
+        target_position=(2, 2),
+        obstacle_positions={(1, 0)},
+    )
+    agent = next(iter(environment.agents))
+    policy = DownOnlyPolicy(input_dim=11, hidden_dim=8, action_dim=5)
+
+    action_index = select_greedy_action(policy, environment, agent)
+
+    assert action_index == 4
 
 
 def test_halt_action_is_valid_and_keeps_position() -> None:

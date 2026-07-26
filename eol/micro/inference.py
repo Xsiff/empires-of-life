@@ -9,8 +9,7 @@ from eol.micro.train import (
     ACTION_SPACE,
     TrainingConfig,
     encode_state,
-    get_valid_action_mask,
-    mask_action_logits,
+    resolve_action,
 )
 
 
@@ -19,13 +18,14 @@ def select_greedy_action(
     environment: Environment,
     agent: Agent2D,
 ) -> int:
-    """Choose the highest-scoring valid action for the current state."""
+    """Choose the highest-scoring action, halting if it cannot be executed."""
 
     state = encode_state(environment, agent).unsqueeze(0)
-    valid_action_mask = get_valid_action_mask(environment, agent)
     with torch.no_grad():
-        logits = mask_action_logits(policy(state), valid_action_mask)
-    return int(torch.argmax(logits, dim=1).item())
+        logits = policy(state)
+    action_index = int(torch.argmax(logits, dim=1).item())
+    resolved_action = resolve_action(environment, agent, action_index)
+    return ACTION_SPACE.index(resolved_action)
 
 
 def evaluate_policy(
