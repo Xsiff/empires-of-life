@@ -89,11 +89,20 @@ def encode_state(environment: Environment, agent: Agent2D) -> torch.Tensor:
     height_scale = max(environment.height - 1, 1)
     width_scale = max(environment.width - 1, 1)
 
-    blocked_features = []
-    for action in ACTION_SPACE:
-        blocked_features.append(
-            0.0 if environment.can_move_to((agent, action)) else 1.0
-        )
+    local_view_features: list[float] = []
+    for row_offset in (-2, -1, 0, 1, 2):
+        for col_offset in (-2, -1, 0, 1, 2):
+            observed_position = (agent_row + row_offset, agent_col + col_offset)
+            if not environment.in_bounds(observed_position):
+                local_view_features.append(-1.0)
+            elif observed_position == environment.target_position:
+                local_view_features.append(0.5)
+            elif observed_position in environment.obstacle_set:
+                local_view_features.append(-1.0)
+            elif observed_position in environment.agent_positions:
+                local_view_features.append(1.0)
+            else:
+                local_view_features.append(0.0)
 
     return torch.tensor(
         [
@@ -103,7 +112,7 @@ def encode_state(environment: Environment, agent: Agent2D) -> torch.Tensor:
             target_col / width_scale,
             delta_row / height_scale,
             delta_col / width_scale,
-            *blocked_features,
+            *local_view_features,
         ],
         dtype=torch.float32,
     )
@@ -256,7 +265,7 @@ def train_policy(config: TrainingConfig) -> torch.nn.Module:
     torch.manual_seed(config.seed)
     random.seed(config.seed)
 
-    policy = DirectionPolicy(input_dim=11, hidden_dim=config.hidden_dim, action_dim=5)
+    policy = DirectionPolicy(input_dim=31, hidden_dim=config.hidden_dim, action_dim=5)
     optimizer = optim.Adam(policy.parameters(), lr=config.learning_rate)
 
     metrics: list[TrainMetrics] = []

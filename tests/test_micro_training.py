@@ -42,8 +42,48 @@ def test_encode_state_returns_expected_shape_and_dtype() -> None:
 
     state = encode_state(environment, next(iter(environment.agents)))
 
-    assert state.shape == (11,)
+    assert state.shape == (31,)
     assert state.dtype == torch.float32
+
+
+def test_encode_state_includes_centered_5x5_local_view() -> None:
+    environment = Environment(
+        width=5,
+        height=5,
+        agents={Agent2D((1, 2))},
+        target_position=(2, 3),
+        obstacle_positions={(0, 2), (1, 1)},
+    )
+
+    state = encode_state(environment, next(iter(environment.agents)))
+
+    assert state[6:].tolist() == [
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        0.0,
+        0.0,
+        -1.0,
+        0.0,
+        0.0,
+        0.0,
+        -1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ]
 
 
 def test_valid_action_mask_blocks_walls_and_obstacles() -> None:
@@ -77,13 +117,13 @@ def test_select_action_returns_valid_index_and_state() -> None:
         target_position=(2, 2),
         obstacle_positions={(1, 0)},
     )
-    policy = DirectionPolicy(input_dim=11, hidden_dim=8, action_dim=5)
+    policy = DirectionPolicy(input_dim=31, hidden_dim=8, action_dim=5)
 
     action_index, log_prob, state, valid_action_mask = select_action(
         policy, environment, next(iter(environment.agents))
     )
 
-    assert state.shape == (11,)
+    assert state.shape == (31,)
     assert valid_action_mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0]
     assert 0 <= action_index < 5
     assert log_prob.ndim == 0
@@ -98,7 +138,7 @@ def test_collect_episode_reaches_target_with_deterministic_policy() -> None:
         obstacle_positions=(),
     )
     agent = next(iter(environment.agents))
-    policy = RightOnlyPolicy(input_dim=11, hidden_dim=8, action_dim=5)
+    policy = RightOnlyPolicy(input_dim=31, hidden_dim=8, action_dim=5)
 
     trajectory = collect_episode(policy, environment, agent, max_steps=4)
 
@@ -133,7 +173,7 @@ def test_collect_episode_counts_halt_when_it_is_the_only_valid_action() -> None:
         obstacle_positions={(0, 1), (1, 0)},
     )
     agent = next(iter(environment.agents))
-    policy = DirectionPolicy(input_dim=11, hidden_dim=8, action_dim=5)
+    policy = DirectionPolicy(input_dim=31, hidden_dim=8, action_dim=5)
 
     trajectory = collect_episode(policy, environment, agent, max_steps=4)
 
@@ -152,7 +192,7 @@ def test_select_greedy_action_returns_halt_for_blocked_suggestion() -> None:
         obstacle_positions={(1, 0)},
     )
     agent = next(iter(environment.agents))
-    policy = DownOnlyPolicy(input_dim=11, hidden_dim=8, action_dim=5)
+    policy = DownOnlyPolicy(input_dim=31, hidden_dim=8, action_dim=5)
 
     action_index = select_greedy_action(policy, environment, agent)
 
@@ -204,7 +244,7 @@ def test_discounted_returns_computes_expected_sequence() -> None:
     trajectory = EpisodeTrajectory(
         steps=(
             EpisodeStep(
-                state=torch.zeros(11),
+                state=torch.zeros(31),
                 valid_action_mask=torch.ones(5),
                 action_index=0,
                 action=Action.UP,
@@ -215,7 +255,7 @@ def test_discounted_returns_computes_expected_sequence() -> None:
                 position_after=(0, 0),
             ),
             EpisodeStep(
-                state=torch.zeros(11),
+                state=torch.zeros(31),
                 valid_action_mask=torch.ones(5),
                 action_index=0,
                 action=Action.UP,
@@ -226,7 +266,7 @@ def test_discounted_returns_computes_expected_sequence() -> None:
                 position_after=(0, 0),
             ),
             EpisodeStep(
-                state=torch.zeros(11),
+                state=torch.zeros(31),
                 valid_action_mask=torch.ones(5),
                 action_index=0,
                 action=Action.UP,
