@@ -28,7 +28,7 @@ def test_encode_state_returns_expected_shape_and_dtype() -> None:
 
     state = encode_state(environment, next(iter(environment.agents)))
 
-    assert state.shape == (10,)
+    assert state.shape == (11,)
     assert state.dtype == torch.float32
 
 
@@ -43,16 +43,16 @@ def test_valid_action_mask_blocks_walls_and_obstacles() -> None:
 
     mask = get_valid_action_mask(environment, next(iter(environment.agents)))
 
-    assert mask.tolist() == [0.0, 0.0, 0.0, 1.0]
+    assert mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0]
 
 
 def test_mask_action_logits_removes_invalid_moves() -> None:
-    logits = torch.tensor([[10.0, 5.0, 2.0, 1.0]])
-    mask = torch.tensor([0.0, 1.0, 0.0, 1.0])
+    logits = torch.tensor([[10.0, 5.0, 2.0, 1.0, 7.0]])
+    mask = torch.tensor([0.0, 1.0, 0.0, 1.0, 1.0])
 
     masked_logits = mask_action_logits(logits, mask)
 
-    assert torch.argmax(masked_logits, dim=1).item() == 1
+    assert torch.argmax(masked_logits, dim=1).item() == 4
 
 
 def test_select_action_returns_valid_index_and_state() -> None:
@@ -63,15 +63,15 @@ def test_select_action_returns_valid_index_and_state() -> None:
         target_position=(2, 2),
         obstacle_positions={(1, 0)},
     )
-    policy = DirectionPolicy(input_dim=10, hidden_dim=8, action_dim=4)
+    policy = DirectionPolicy(input_dim=11, hidden_dim=8, action_dim=5)
 
     action_index, log_prob, state, valid_action_mask = select_action(
         policy, environment, next(iter(environment.agents))
     )
 
-    assert state.shape == (10,)
-    assert valid_action_mask.tolist() == [0.0, 0.0, 0.0, 1.0]
-    assert action_index == 3
+    assert state.shape == (11,)
+    assert valid_action_mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0]
+    assert action_index in {3, 4}
     assert log_prob.ndim == 0
 
 
@@ -84,10 +84,10 @@ def test_collect_episode_reaches_target_with_deterministic_policy() -> None:
         obstacle_positions=(),
     )
     agent = next(iter(environment.agents))
-    policy = DirectionPolicy(input_dim=10, hidden_dim=8, action_dim=4)
+    policy = DirectionPolicy(input_dim=11, hidden_dim=8, action_dim=5)
 
     def forward_override(_state: torch.Tensor) -> torch.Tensor:
-        return torch.tensor([[-10.0, -10.0, -10.0, 10.0]], dtype=torch.float32)
+        return torch.tensor([[-10.0, -10.0, -10.0, 10.0, -10.0]], dtype=torch.float32)
 
     policy.forward = forward_override  # type: ignore[method-assign]
 
@@ -101,7 +101,7 @@ def test_collect_episode_reaches_target_with_deterministic_policy() -> None:
     assert agent.position == (0, 2)
 
 
-def test_collect_episode_stops_when_no_actions_are_valid() -> None:
+def test_collect_episode_counts_halt_when_it_is_the_only_valid_action() -> None:
     environment = Environment(
         width=2,
         height=2,
@@ -110,13 +110,32 @@ def test_collect_episode_stops_when_no_actions_are_valid() -> None:
         obstacle_positions={(0, 1), (1, 0)},
     )
     agent = next(iter(environment.agents))
-    policy = DirectionPolicy(input_dim=10, hidden_dim=8, action_dim=4)
+    policy = DirectionPolicy(input_dim=11, hidden_dim=8, action_dim=5)
 
     trajectory = collect_episode(policy, environment, agent, max_steps=4)
 
-    assert trajectory.steps == ()
+    assert len(trajectory.steps) == 4
+    assert all(step.action is Action.HALT for step in trajectory.steps)
     assert trajectory.reached_target is False
-    assert trajectory.termination_reason == "no_valid_actions"
+    assert trajectory.termination_reason == "max_steps"
+
+
+def test_halt_action_is_valid_and_keeps_position() -> None:
+    environment = Environment(
+        width=3,
+        height=3,
+        agents={Agent2D((1, 1))},
+        target_position=(2, 2),
+        obstacle_positions=(),
+    )
+    agent = next(iter(environment.agents))
+
+    mask = get_valid_action_mask(environment, agent)
+    before = agent.position
+    environment.move_agent((agent, Action.HALT))
+
+    assert mask.tolist() == [1.0, 1.0, 1.0, 1.0, 1.0]
+    assert agent.position == before
 
 
 def test_reward_improves_when_agent_moves_closer() -> None:

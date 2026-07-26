@@ -20,6 +20,7 @@ ACTION_SPACE: tuple[Action, ...] = (
     Action.DOWN,
     Action.LEFT,
     Action.RIGHT,
+    Action.HALT,
 )
 
 
@@ -247,7 +248,7 @@ def train_policy(config: TrainingConfig) -> torch.nn.Module:
     torch.manual_seed(config.seed)
     random.seed(config.seed)
 
-    policy = DirectionPolicy(input_dim=10, hidden_dim=config.hidden_dim, action_dim=4)
+    policy = DirectionPolicy(input_dim=11, hidden_dim=config.hidden_dim, action_dim=5)
     optimizer = optim.Adam(policy.parameters(), lr=config.learning_rate)
 
     metrics: list[TrainMetrics] = []

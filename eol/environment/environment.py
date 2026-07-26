@@ -193,6 +193,8 @@ class Environment:
     ) -> bool:
 
         agent, move = action
+        if move is Action.HALT:
+            return True
         x_next, y_next = agent.next_step_position(move)
         if not self.in_bounds((x_next, y_next)):
             return False
@@ -204,6 +206,9 @@ class Environment:
             raise ValueError("Agent cannot move there")
 
         agent, move = action
+        if move is Action.HALT:
+            return
+
         x, y = agent.position
         next_x, next_y = agent.next_step_position(move)
         del self.agent_positions[(x, y)]
