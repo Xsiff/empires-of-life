@@ -6,11 +6,9 @@ import torch
 import time
 
 from eol.environment import CellType, Environment, RandomEnvironmentGenerator
+from eol.micro.config import NavigationConfig
+from eol.micro.features import ACTION_SPACE
 from eol.micro.inference import select_greedy_action
-from eol.micro.train import (
-    TrainingConfig,
-    ACTION_SPACE,
-)
 
 
 def build_environment_frame(
@@ -77,7 +75,7 @@ def visualize_policy(
 
 def visualize_multiple_environments(
     policy: torch.nn.Module,
-    config: TrainingConfig,
+    config: NavigationConfig,
     *,
     episodes: int | None = None,
     sleep_seconds: float | None = None,

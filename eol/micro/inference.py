@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import torch
 
-from eol.environment import Agent2D, Environment, RandomEnvironmentGenerator
-from eol.micro.train import (
+from eol.environment import Agent2D, Environment
+from eol.micro.config import NavigationConfig
+from eol.micro.features import (
     ACTION_SPACE,
-    TrainingConfig,
     encode_state,
+    extract_policy_logits,
+    get_valid_action_mask,
+    mask_action_logits,
     resolve_action,
 )
+from eol.micro.scenario import ScenarioFactory, build_default_scenario_factory
 
 
 def select_greedy_action(
@@ -22,7 +26,11 @@ def select_greedy_action(
 
     state = encode_state(environment, agent).unsqueeze(0)
     with torch.no_grad():
-        logits = policy(state)
+        policy_output = policy(state)
+        logits = extract_policy_logits(policy_output)
+    if isinstance(policy_output, tuple):
+        valid_action_mask = get_valid_action_mask(environment, agent)
+        logits = mask_action_logits(logits, valid_action_mask)
     action_index = int(torch.argmax(logits, dim=1).item())
     resolved_action = resolve_action(environment, agent, action_index)
     return ACTION_SPACE.index(resolved_action)
@@ -30,22 +38,21 @@ def select_greedy_action(
 
 def evaluate_policy(
     policy: torch.nn.Module,
-    config: TrainingConfig,
+    config: NavigationConfig,
     *,
     episodes: int | None = None,
+    scenario_factory: ScenarioFactory | None = None,
 ) -> list[bool]:
     """Run greedy evaluation episodes on fresh environments."""
 
     evaluation_count = config.evaluation_episodes if episodes is None else episodes
+    create_scenario = scenario_factory or build_default_scenario_factory(config)
     results: list[bool] = []
     for episode_index in range(evaluation_count):
-        generator = RandomEnvironmentGenerator(
-            size=config.grid_size,
-            obstacle_count=config.obstacle_count,
-            seed=config.seed + 10_000 + episode_index,
+        environment, agent = create_scenario(
+            episode_index,
+            config.seed + 10_000 + episode_index,
         )
-        environment, agents = generator.generate_environment()
-        agent = next(iter(agents))
 
         for _ in range(config.max_steps):
             if agent.position == environment.target_position:

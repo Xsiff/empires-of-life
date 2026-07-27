@@ -1,21 +1,36 @@
 import torch
 
+from eol.cli.main import build_parser
 from eol.environment import Action, Agent2D, Environment
-from eol.micro.inference import evaluate_policy, select_greedy_action
-from eol.micro.model import DirectionPolicy
-from eol.micro.reward import compute_reward
-from eol.micro.train import (
-    EpisodeStep,
-    EpisodeTrajectory,
-    TrainingConfig,
-    collect_episode,
+from eol.micro.algorithms import (
+    build_ppo_batch,
+    compute_gae,
     discounted_returns,
+    ppo_losses,
+    train_policy,
+    train_ppo_policy,
+)
+from eol.micro.config import PPOTrainingConfig, TrainingConfig
+from eol.micro.expert import (
+    a_star_path,
+    collect_expert_samples,
+    pretrain_policy_with_astar,
+)
+from eol.micro.features import (
     encode_state,
     get_valid_action_mask,
     mask_action_logits,
     resolve_action,
+)
+from eol.micro.inference import evaluate_policy, select_greedy_action
+from eol.micro.model import ActorCriticPolicy, DirectionPolicy
+from eol.micro.reward import compute_reward
+from eol.micro.rollout import (
+    EpisodeStep,
+    EpisodeTrajectory,
+    collect_episode,
+    collect_ppo_episode,
     select_action,
-    train_policy,
 )
 
 
@@ -29,6 +44,44 @@ class DownOnlyPolicy(DirectionPolicy):
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         del state
         return torch.tensor([[-10.0, 10.0, -10.0, -10.0, -10.0]], dtype=torch.float32)
+
+
+class DownOnlyActorCritic(ActorCriticPolicy):
+    def forward(self, state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size = state.shape[0]
+        return (
+            torch.tensor(
+                [[-10.0, 10.0, -10.0, -10.0, -10.0]],
+                dtype=torch.float32,
+            ).repeat(batch_size, 1),
+            torch.full((batch_size,), 0.5, dtype=torch.float32),
+        )
+
+
+def test_actor_critic_policy_returns_logits_and_values() -> None:
+    policy = ActorCriticPolicy(input_dim=31, hidden_dim=8, action_dim=5)
+
+    logits, values = policy(torch.zeros((2, 31)))
+
+    assert logits.shape == (2, 5)
+    assert values.shape == (2,)
+
+
+def test_a_star_path_finds_a_valid_route() -> None:
+    environment = Environment(
+        width=4,
+        height=4,
+        agents={Agent2D((0, 0))},
+        target_position=(0, 3),
+        obstacle_positions={(0, 1), (1, 1)},
+    )
+
+    path = a_star_path(environment, (0, 0), (0, 3))
+
+    assert path is not None
+    assert path[0] == (0, 0)
+    assert path[-1] == (0, 3)
+    assert len(path) > 1
 
 
 def test_encode_state_returns_expected_shape_and_dtype() -> None:
@@ -76,7 +129,7 @@ def test_encode_state_includes_centered_5x5_local_view() -> None:
         0.0,
         0.0,
         0.0,
-        0.5,
+        0.25,
         0.0,
         0.0,
         0.0,
@@ -217,7 +270,7 @@ def test_halt_action_is_valid_and_keeps_position() -> None:
     assert agent.position == before
 
 
-def test_reward_improves_when_agent_moves_closer() -> None:
+def test_reward_is_negative_when_target_is_not_reached() -> None:
     environment = Environment(
         width=5,
         height=5,
@@ -237,7 +290,30 @@ def test_reward_improves_when_agent_moves_closer() -> None:
         episode_finished=False,
     )
 
-    assert reward > 0
+    assert reward < 0.0
+
+
+def test_reward_is_positive_when_target_is_reached() -> None:
+    environment = Environment(
+        width=5,
+        height=5,
+        agents={Agent2D((2, 3))},
+        target_position=(2, 4),
+        obstacle_positions=(),
+    )
+    agent = next(iter(environment.agents))
+    environment.move_agent((agent, Action.RIGHT))
+
+    reward = compute_reward(
+        environment,
+        agent,
+        1,
+        position_before=(2, 3),
+        reached_target=True,
+        episode_finished=True,
+    )
+
+    assert reward > 5.0
 
 
 def test_discounted_returns_computes_expected_sequence() -> None:
@@ -287,6 +363,90 @@ def test_discounted_returns_computes_expected_sequence() -> None:
     assert torch.allclose(returns, torch.tensor([2.75, 3.5, 3.0]))
 
 
+def test_compute_gae_returns_expected_sequence() -> None:
+    advantages, returns = compute_gae(
+        rewards=torch.tensor([1.0, 2.0, 3.0]),
+        values=torch.tensor([0.5, 0.5, 0.5]),
+        dones=torch.tensor([0.0, 0.0, 1.0]),
+        gamma=0.5,
+        gae_lambda=1.0,
+    )
+
+    assert torch.allclose(advantages, torch.tensor([2.25, 3.0, 2.5]))
+    assert torch.allclose(returns, torch.tensor([2.75, 3.5, 3.0]))
+
+
+def test_collect_expert_samples_returns_valid_actions() -> None:
+    samples = collect_expert_samples(
+        PPOTrainingConfig(
+            grid_size=4,
+            obstacle_count=1,
+            pretraining_episodes=3,
+            seed=7,
+        )
+    )
+
+    assert len(samples) > 0
+    assert all(sample.state.shape == (31,) for sample in samples)
+    assert all(sample.valid_action_mask.shape == (5,) for sample in samples)
+    assert all(
+        sample.valid_action_mask[sample.action_index].item() == 1.0
+        for sample in samples
+    )
+
+
+def test_collect_ppo_episode_stores_old_log_probs_and_values() -> None:
+    environment = Environment(
+        width=3,
+        height=3,
+        agents={Agent2D((0, 0))},
+        target_position=(2, 2),
+        obstacle_positions={(1, 0)},
+    )
+    agent = next(iter(environment.agents))
+    policy = DownOnlyActorCritic(input_dim=31, hidden_dim=8, action_dim=5)
+
+    trajectory = collect_ppo_episode(policy, environment, agent, max_steps=2)
+
+    assert len(trajectory.steps) == 2
+    assert trajectory.steps[0].action in {Action.RIGHT, Action.HALT}
+    assert all(step.old_log_prob.ndim == 0 for step in trajectory.steps)
+    assert all(step.value.ndim == 0 for step in trajectory.steps)
+
+
+def test_build_ppo_batch_and_losses_have_expected_shapes() -> None:
+    environment = Environment(
+        width=3,
+        height=3,
+        agents={Agent2D((0, 0))},
+        target_position=(2, 2),
+        obstacle_positions={(1, 0)},
+    )
+    agent = next(iter(environment.agents))
+    policy = ActorCriticPolicy(input_dim=31, hidden_dim=8, action_dim=5)
+    trajectory = collect_ppo_episode(policy, environment, agent, max_steps=3)
+
+    batch = build_ppo_batch((trajectory,), gamma=0.99, gae_lambda=0.95)
+    total_loss, policy_loss, value_loss, entropy = ppo_losses(
+        policy,
+        batch,
+        clip_epsilon=0.2,
+        value_loss_coef=0.5,
+        entropy_coef=0.01,
+    )
+
+    assert batch.states.shape[1] == 31
+    assert batch.valid_action_masks.shape[1] == 5
+    assert batch.action_indices.ndim == 1
+    assert batch.old_log_probs.ndim == 1
+    assert batch.returns.ndim == 1
+    assert batch.advantages.ndim == 1
+    assert torch.isfinite(total_loss)
+    assert torch.isfinite(policy_loss)
+    assert torch.isfinite(value_loss)
+    assert torch.isfinite(entropy)
+
+
 def test_train_policy_returns_torch_model_and_saves_weights(tmp_path) -> None:
     model = train_policy(
         TrainingConfig(
@@ -302,6 +462,44 @@ def test_train_policy_returns_torch_model_and_saves_weights(tmp_path) -> None:
 
     assert isinstance(model, DirectionPolicy)
     assert (tmp_path / "policy.pt").exists()
+
+
+def test_train_ppo_policy_returns_torch_model_and_saves_weights(tmp_path) -> None:
+    model = train_ppo_policy(
+        PPOTrainingConfig(
+            grid_size=4,
+            obstacle_count=1,
+            episodes=1,
+            max_steps=4,
+            hidden_dim=8,
+            rollout_episodes_per_update=2,
+            ppo_epochs=2,
+            minibatch_size=4,
+            print_every=1,
+            save_path=tmp_path / "policy_ppo.pt",
+        )
+    )
+
+    assert isinstance(model, ActorCriticPolicy)
+    assert (tmp_path / "policy_ppo.pt").exists()
+
+
+def test_pretrain_policy_with_astar_keeps_actor_critic_callable() -> None:
+    policy = ActorCriticPolicy(input_dim=31, hidden_dim=8, action_dim=5)
+    config = PPOTrainingConfig(
+        grid_size=4,
+        obstacle_count=1,
+        pretraining_episodes=4,
+        pretraining_epochs=2,
+        pretraining_batch_size=4,
+        hidden_dim=8,
+    )
+
+    pretrain_policy_with_astar(policy, config)
+    logits, values = policy(torch.zeros((1, 31)))
+
+    assert logits.shape == (1, 5)
+    assert values.shape == (1,)
 
 
 def test_evaluate_policy_runs_on_fresh_environments(tmp_path) -> None:
@@ -322,3 +520,50 @@ def test_evaluate_policy_runs_on_fresh_environments(tmp_path) -> None:
 
     assert len(results) == 2
     assert all(isinstance(result, bool) for result in results)
+
+
+def test_evaluate_policy_runs_on_fresh_environments_for_ppo(tmp_path) -> None:
+    policy = train_ppo_policy(
+        PPOTrainingConfig(
+            grid_size=4,
+            obstacle_count=1,
+            episodes=1,
+            max_steps=3,
+            hidden_dim=8,
+            rollout_episodes_per_update=2,
+            ppo_epochs=2,
+            minibatch_size=4,
+            print_every=1,
+            evaluation_episodes=2,
+            save_path=tmp_path / "policy_ppo.pt",
+        )
+    )
+
+    results = evaluate_policy(policy, PPOTrainingConfig(evaluation_episodes=2))
+
+    assert len(results) == 2
+    assert all(isinstance(result, bool) for result in results)
+
+
+def test_cli_parser_accepts_ppo_algorithm_arguments() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "train",
+            "--algorithm",
+            "ppo",
+            "--rollout-episodes-per-update",
+            "2",
+            "--ppo-epochs",
+            "3",
+            "--pretraining-episodes",
+            "5",
+        ]
+    )
+
+    assert args.command == "train"
+    assert args.algorithm == "ppo"
+    assert args.rollout_episodes_per_update == 2
+    assert args.ppo_epochs == 3
+    assert args.pretraining_episodes == 5
