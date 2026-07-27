@@ -10,6 +10,7 @@ from torch import nn, optim
 from torch.distributions import Categorical
 
 from eol.micro.config import ACTION_DIM, PPOTrainingConfig, STATE_DIM, TrainingConfig
+from eol.micro.curriculum import build_curriculum_scenario_factory
 from eol.micro.expert import pretrain_policy_with_astar
 from eol.micro.features import mask_action_logits
 from eol.micro.model import ActorCriticPolicy, DirectionPolicy
@@ -182,7 +183,11 @@ def train_policy(
     torch.manual_seed(config.seed)
     random.seed(config.seed)
 
-    create_scenario = scenario_factory or build_default_scenario_factory(config)
+    create_scenario = scenario_factory or (
+        build_curriculum_scenario_factory(config)
+        if config.curriculum
+        else build_default_scenario_factory(config)
+    )
     policy = DirectionPolicy(
         input_dim=STATE_DIM,
         hidden_dim=config.hidden_dim,
@@ -238,7 +243,11 @@ def train_ppo_policy(
     torch.manual_seed(config.seed)
     random.seed(config.seed)
 
-    create_scenario = scenario_factory or build_default_scenario_factory(config)
+    create_scenario = scenario_factory or (
+        build_curriculum_scenario_factory(config)
+        if config.curriculum
+        else build_default_scenario_factory(config)
+    )
     policy = ActorCriticPolicy(
         input_dim=STATE_DIM,
         hidden_dim=config.hidden_dim,
@@ -256,7 +265,7 @@ def train_ppo_policy(
                 + update_index * config.rollout_episodes_per_update
                 + rollout_index
             )
-            environment, agent = create_scenario(rollout_index, seed)
+            environment, agent = create_scenario(update_index, seed)
             trajectory = collect_ppo_episode(
                 policy,
                 environment,

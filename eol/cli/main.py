@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 from eol.micro.algorithms import train_policy, train_ppo_policy
+from eol.micro.curriculum import get_curriculum_final_stage
 from eol.micro.inference import evaluate_policy
 from eol.micro.config import PPOTrainingConfig, TrainingConfig
 from eol.visualization import visualize_multiple_environments
@@ -63,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--visualization-sleep-seconds",
         type=float,
         default=TrainingConfig.visualization_sleep_seconds,
+    )
+    train_parser.add_argument(
+        "--curriculum",
+        action="store_true",
+        help="Train with the staged curriculum schedule.",
     )
     train_parser.add_argument(
         "--save-path", type=Path, default=TrainingConfig.save_path
@@ -148,6 +155,7 @@ def run_training_pipeline(args: argparse.Namespace) -> None:
             evaluation_episodes=args.evaluation_episodes,
             visualization_episodes=args.visualization_episodes,
             visualization_sleep_seconds=args.visualization_sleep_seconds,
+            curriculum=args.curriculum,
             rollout_episodes_per_update=args.rollout_episodes_per_update,
             ppo_epochs=args.ppo_epochs,
             minibatch_size=args.minibatch_size,
@@ -177,9 +185,18 @@ def run_training_pipeline(args: argparse.Namespace) -> None:
             evaluation_episodes=args.evaluation_episodes,
             visualization_episodes=args.visualization_episodes,
             visualization_sleep_seconds=args.visualization_sleep_seconds,
+            curriculum=args.curriculum,
         )
         policy = train_policy(config=training_config)
-    results = evaluate_policy(policy=policy, config=training_config)
+    evaluation_config = training_config
+    if training_config.curriculum:
+        final_stage = get_curriculum_final_stage()
+        evaluation_config = replace(
+            training_config,
+            grid_size=final_stage.grid_size,
+            obstacle_count=final_stage.obstacle_count,
+        )
+    results = evaluate_policy(policy=policy, config=evaluation_config)
     successes = sum(results)
     print(
         f"Evaluation summary: reached target in "
@@ -188,9 +205,9 @@ def run_training_pipeline(args: argparse.Namespace) -> None:
     if training_config.visualization_episodes > 0:
         visualize_multiple_environments(
             policy=policy,
-            config=training_config,
-            episodes=training_config.visualization_episodes,
-            sleep_seconds=training_config.visualization_sleep_seconds,
+            config=evaluation_config,
+            episodes=evaluation_config.visualization_episodes,
+            sleep_seconds=evaluation_config.visualization_sleep_seconds,
         )
 
 

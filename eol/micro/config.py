@@ -25,8 +25,9 @@ class NavigationConfig:
     print_every: int = 50
     save_path: Path = Path("eol/micro/policy.pt")
     evaluation_episodes: int = 5
-    visualization_episodes: int = 3
+    visualization_episodes: int = 20
     visualization_sleep_seconds: float = 0.15
+    curriculum: bool = False
 
 
 @dataclass(frozen=True)

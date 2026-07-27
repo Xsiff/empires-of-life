@@ -3,12 +3,14 @@
 from .inference import evaluate_policy, select_greedy_action
 from .model import ActorCriticPolicy, DirectionPolicy
 from .reward import Reward, compute_reward
+from .curriculum import CURRICULUM_STAGES
 from .config import PPOTrainingConfig, TrainingConfig
 from .algorithms import train_policy, train_ppo_policy
 from .expert import pretrain_policy_with_astar
 
 __all__ = [
     "ActorCriticPolicy",
+    "CURRICULUM_STAGES",
     "DirectionPolicy",
     "PPOTrainingConfig",
     "Reward",

@@ -11,6 +11,12 @@ from eol.micro.algorithms import (
     train_ppo_policy,
 )
 from eol.micro.config import PPOTrainingConfig, TrainingConfig
+from eol.micro.curriculum import (
+    CURRICULUM_STAGES,
+    build_curriculum_scenario_factory,
+    get_curriculum_final_stage,
+    get_curriculum_stage,
+)
 from eol.micro.expert import (
     a_star_path,
     collect_expert_samples,
@@ -82,6 +88,35 @@ def test_a_star_path_finds_a_valid_route() -> None:
     assert path[0] == (0, 0)
     assert path[-1] == (0, 3)
     assert len(path) > 1
+
+
+def test_curriculum_stage_schedule_matches_requested_progression() -> None:
+    stages = [
+        get_curriculum_stage(1, 8),
+        get_curriculum_stage(2, 8),
+        get_curriculum_stage(3, 8),
+        get_curriculum_stage(4, 8),
+        get_curriculum_stage(5, 8),
+        get_curriculum_stage(6, 8),
+        get_curriculum_stage(7, 8),
+        get_curriculum_stage(8, 8),
+    ]
+
+    assert stages == list(CURRICULUM_STAGES)
+
+
+def test_curriculum_scenario_factory_grows_environment() -> None:
+    factory = build_curriculum_scenario_factory(TrainingConfig(episodes=8))
+
+    stage_one_environment, _ = factory(1, 11)
+    stage_eight_environment, _ = factory(8, 17)
+
+    assert stage_one_environment.width == 5
+    assert stage_one_environment.height == 5
+    assert len(stage_one_environment.obstacle_positions) == 1
+    assert stage_eight_environment.width == 20
+    assert stage_eight_environment.height == 20
+    assert len(stage_eight_environment.obstacle_positions) == 40
 
 
 def test_encode_state_returns_expected_shape_and_dtype() -> None:
@@ -464,6 +499,22 @@ def test_train_policy_returns_torch_model_and_saves_weights(tmp_path) -> None:
     assert (tmp_path / "policy.pt").exists()
 
 
+def test_train_policy_supports_curriculum(tmp_path) -> None:
+    model = train_policy(
+        TrainingConfig(
+            episodes=4,
+            max_steps=4,
+            hidden_dim=8,
+            print_every=1,
+            save_path=tmp_path / "policy_curriculum.pt",
+            curriculum=True,
+        )
+    )
+
+    assert isinstance(model, DirectionPolicy)
+    assert (tmp_path / "policy_curriculum.pt").exists()
+
+
 def test_train_ppo_policy_returns_torch_model_and_saves_weights(tmp_path) -> None:
     model = train_ppo_policy(
         PPOTrainingConfig(
@@ -482,6 +533,25 @@ def test_train_ppo_policy_returns_torch_model_and_saves_weights(tmp_path) -> Non
 
     assert isinstance(model, ActorCriticPolicy)
     assert (tmp_path / "policy_ppo.pt").exists()
+
+
+def test_train_ppo_policy_supports_curriculum(tmp_path) -> None:
+    model = train_ppo_policy(
+        PPOTrainingConfig(
+            episodes=1,
+            max_steps=4,
+            hidden_dim=8,
+            rollout_episodes_per_update=2,
+            ppo_epochs=2,
+            minibatch_size=4,
+            print_every=1,
+            save_path=tmp_path / "policy_ppo_curriculum.pt",
+            curriculum=True,
+        )
+    )
+
+    assert isinstance(model, ActorCriticPolicy)
+    assert (tmp_path / "policy_ppo_curriculum.pt").exists()
 
 
 def test_pretrain_policy_with_astar_keeps_actor_critic_callable() -> None:
@@ -567,3 +637,12 @@ def test_cli_parser_accepts_ppo_algorithm_arguments() -> None:
     assert args.rollout_episodes_per_update == 2
     assert args.ppo_epochs == 3
     assert args.pretraining_episodes == 5
+
+
+def test_cli_parser_supports_curriculum_flag() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["train", "--curriculum"])
+
+    assert args.curriculum is True
+    assert get_curriculum_final_stage().grid_size == 20
