@@ -27,7 +27,7 @@ class NavigationConfig:
     evaluation_episodes: int = 5
     visualization_episodes: int = 20
     visualization_sleep_seconds: float = 0.15
-    curriculum: bool = False
+    curriculum: bool = True
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ class PretrainingConfig:
 class PPOTrainingConfig(NavigationConfig, PretrainingConfig):
     """Configuration for PPO training."""
 
-    episodes: int = 250
+    episodes: int = 15000
     learning_rate: float = 3e-4
     print_every: int = 10
     save_path: Path = Path("eol/micro/policy_ppo.pt")

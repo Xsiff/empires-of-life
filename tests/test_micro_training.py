@@ -1,6 +1,5 @@
 import torch
 
-from eol.cli.main import build_parser
 from eol.environment import Action, Agent2D, Environment
 from eol.micro.algorithms import (
     build_ppo_batch,
@@ -14,7 +13,6 @@ from eol.micro.config import PPOTrainingConfig, TrainingConfig
 from eol.micro.curriculum import (
     CURRICULUM_STAGES,
     build_curriculum_scenario_factory,
-    get_curriculum_final_stage,
     get_curriculum_stage,
 )
 from eol.micro.expert import (
@@ -613,36 +611,3 @@ def test_evaluate_policy_runs_on_fresh_environments_for_ppo(tmp_path) -> None:
 
     assert len(results) == 2
     assert all(isinstance(result, bool) for result in results)
-
-
-def test_cli_parser_accepts_ppo_algorithm_arguments() -> None:
-    parser = build_parser()
-
-    args = parser.parse_args(
-        [
-            "train",
-            "--algorithm",
-            "ppo",
-            "--rollout-episodes-per-update",
-            "2",
-            "--ppo-epochs",
-            "3",
-            "--pretraining-episodes",
-            "5",
-        ]
-    )
-
-    assert args.command == "train"
-    assert args.algorithm == "ppo"
-    assert args.rollout_episodes_per_update == 2
-    assert args.ppo_epochs == 3
-    assert args.pretraining_episodes == 5
-
-
-def test_cli_parser_supports_curriculum_flag() -> None:
-    parser = build_parser()
-
-    args = parser.parse_args(["train", "--curriculum"])
-
-    assert args.curriculum is True
-    assert get_curriculum_final_stage().grid_size == 20

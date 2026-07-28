@@ -14,9 +14,6 @@ dependencies = [
   "torch>=2.3",
 ]
 
-[project.scripts]
-eol = "eol.cli:main"
-
 [dependency-groups]
 dev = [
   "pre-commit",
