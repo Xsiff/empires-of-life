@@ -2,9 +2,14 @@ import torch
 
 from eol.environment import Action, Agent2D, Environment
 from eol.micro.algorithms import (
+    ExpertBatch,
+    behavior_cloning_loss,
     build_ppo_batch,
+    build_expert_batch,
     compute_gae,
     discounted_returns,
+    get_ppo_imitation_weight,
+    is_behavior_cloning_only_phase,
     ppo_losses,
     train_policy,
     train_ppo_policy,
@@ -115,6 +120,20 @@ def test_curriculum_scenario_factory_grows_environment() -> None:
     assert stage_eight_environment.width == 20
     assert stage_eight_environment.height == 20
     assert len(stage_eight_environment.obstacle_positions) == 40
+
+
+def test_ppo_imitation_schedule_matches_requested_phases() -> None:
+    weights = [
+        get_ppo_imitation_weight(1, 8),
+        get_ppo_imitation_weight(3, 8),
+        get_ppo_imitation_weight(5, 8),
+        get_ppo_imitation_weight(7, 8),
+    ]
+
+    assert weights == [1.0, 1.0, 0.25, 0.0]
+    assert is_behavior_cloning_only_phase(1, 8) is True
+    assert is_behavior_cloning_only_phase(3, 8) is False
+    assert is_behavior_cloning_only_phase(7, 8) is False
 
 
 def test_encode_state_returns_expected_shape_and_dtype() -> None:
@@ -426,6 +445,35 @@ def test_collect_expert_samples_returns_valid_actions() -> None:
         sample.valid_action_mask[sample.action_index].item() == 1.0
         for sample in samples
     )
+
+
+def test_build_expert_batch_returns_flattened_tensors() -> None:
+    batch = build_expert_batch(
+        config=PPOTrainingConfig(
+            grid_size=4,
+            obstacle_count=1,
+            pretraining_episodes=3,
+            seed=7,
+        )
+    )
+
+    assert batch is not None
+    assert batch.states.ndim == 2
+    assert batch.valid_action_masks.ndim == 2
+    assert batch.action_indices.ndim == 1
+
+
+def test_behavior_cloning_loss_is_finite() -> None:
+    policy = ActorCriticPolicy(input_dim=31, hidden_dim=8, action_dim=5)
+    batch = ExpertBatch(
+        states=torch.zeros((3, 31)),
+        valid_action_masks=torch.ones((3, 5)),
+        action_indices=torch.tensor([0, 1, 2], dtype=torch.int64),
+    )
+
+    loss = behavior_cloning_loss(policy, batch, torch.tensor([0, 1], dtype=torch.int64))
+
+    assert torch.isfinite(loss)
 
 
 def test_collect_ppo_episode_stores_old_log_probs_and_values() -> None:

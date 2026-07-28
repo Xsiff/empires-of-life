@@ -46,6 +46,15 @@ class PPOBatch:
     advantages: torch.Tensor
 
 
+@dataclass(frozen=True)
+class ExpertBatch:
+    """Flattened expert supervision tensors."""
+
+    states: torch.Tensor
+    valid_action_masks: torch.Tensor
+    action_indices: torch.Tensor
+
+
 def discounted_returns(trajectory: EpisodeTrajectory, gamma: float) -> torch.Tensor:
     """Compute discounted returns for the collected trajectory."""
 
@@ -164,6 +173,73 @@ def ppo_losses(
     return total_loss, policy_loss, value_loss, entropy
 
 
+def get_ppo_imitation_weight(update_index: int, total_updates: int) -> float:
+    """Return the imitation-loss weight for the current PPO update."""
+
+    if total_updates <= 1:
+        return 0.0
+
+    progress = (update_index - 1) / total_updates
+    if progress < 0.25:
+        return 1.0
+    if progress < 0.50:
+        return 1.0
+    if progress < 0.75:
+        return 0.25
+    return 0.0
+
+
+def is_behavior_cloning_only_phase(update_index: int, total_updates: int) -> bool:
+    """Return whether the current PPO update should be pure behavior cloning."""
+
+    if total_updates <= 1:
+        return False
+    return (update_index - 1) / total_updates < 0.25
+
+
+def build_expert_batch(
+    config: PPOTrainingConfig,
+    *,
+    scenario_factory: ScenarioFactory | None = None,
+) -> ExpertBatch | None:
+    """Collect and flatten expert samples for imitation-guided PPO."""
+
+    from eol.micro.expert import collect_expert_samples
+
+    samples = collect_expert_samples(config, scenario_factory=scenario_factory)
+    if not samples:
+        return None
+
+    return ExpertBatch(
+        states=torch.stack([sample.state for sample in samples]),
+        valid_action_masks=torch.stack(
+            [sample.valid_action_mask for sample in samples]
+        ),
+        action_indices=torch.tensor(
+            [sample.action_index for sample in samples],
+            dtype=torch.int64,
+        ),
+    )
+
+
+def behavior_cloning_loss(
+    policy: ActorCriticPolicy,
+    batch: ExpertBatch,
+    minibatch_indices: torch.Tensor,
+) -> torch.Tensor:
+    """Compute behavior-cloning loss on one expert minibatch."""
+
+    logits, _ = policy(batch.states[minibatch_indices])
+    masked_logits = mask_action_logits(
+        logits,
+        batch.valid_action_masks[minibatch_indices],
+    )
+    return torch.nn.functional.cross_entropy(
+        masked_logits,
+        batch.action_indices[minibatch_indices],
+    )
+
+
 def _build_metrics(episode_index: int, trajectory: EpisodeTrajectory) -> TrainMetrics:
     return TrainMetrics(
         episode_index=episode_index,
@@ -253,11 +329,49 @@ def train_ppo_policy(
         hidden_dim=config.hidden_dim,
         action_dim=ACTION_DIM,
     )
-    pretrain_policy_with_astar(policy, config, scenario_factory=create_scenario)
+    expert_batch = build_expert_batch(
+        config=config,
+        scenario_factory=create_scenario,
+    )
+    if expert_batch is None:
+        pretrain_policy_with_astar(policy, config, scenario_factory=create_scenario)
     optimizer = optim.Adam(policy.parameters(), lr=config.learning_rate)
     metrics: list[TrainMetrics] = []
 
     for update_index in range(1, config.episodes + 1):
+        bc_weight = (
+            get_ppo_imitation_weight(update_index, config.episodes)
+            if expert_batch is not None
+            else 0.0
+        )
+        bc_only = (
+            is_behavior_cloning_only_phase(update_index, config.episodes)
+            and expert_batch is not None
+        )
+
+        if bc_only:
+            expert_sample_count = expert_batch.states.shape[0]
+            expert_indices = torch.arange(expert_sample_count)
+            for _ in range(config.ppo_epochs):
+                permutation = expert_indices[torch.randperm(expert_sample_count)]
+                for minibatch_start in range(
+                    0, expert_sample_count, config.minibatch_size
+                ):
+                    minibatch_indices = permutation[
+                        minibatch_start : minibatch_start + config.minibatch_size
+                    ]
+                    loss = behavior_cloning_loss(
+                        policy, expert_batch, minibatch_indices
+                    )
+                    optimizer.zero_grad()
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(policy.parameters(), config.max_grad_norm)
+                    optimizer.step()
+
+            if config.print_every > 0 and update_index % config.print_every == 0:
+                print(f"update={update_index} stage=behavior_cloning")
+            continue
+
         trajectories: list[PPOTrajectory] = []
         for rollout_index in range(config.rollout_episodes_per_update):
             seed = (
@@ -308,6 +422,21 @@ def train_ppo_policy(
                     config.value_loss_coef,
                     config.entropy_coef,
                 )
+                if bc_weight > 0.0 and expert_batch is not None:
+                    expert_sample_count = expert_batch.states.shape[0]
+                    expert_minibatch_size = min(
+                        config.minibatch_size, expert_sample_count
+                    )
+                    expert_minibatch_indices = torch.randint(
+                        0,
+                        expert_sample_count,
+                        (expert_minibatch_size,),
+                    )
+                    total_loss = total_loss + bc_weight * behavior_cloning_loss(
+                        policy,
+                        expert_batch,
+                        expert_minibatch_indices,
+                    )
                 optimizer.zero_grad()
                 total_loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), config.max_grad_norm)
@@ -318,7 +447,7 @@ def train_ppo_policy(
             avg_reward = sum(metric.total_reward for metric in recent) / len(recent)
             successes = sum(metric.reached_target for metric in recent)
             print(
-                f"update={update_index} avg_reward={avg_reward:.3f} "
+                f"update={update_index} bc_weight={bc_weight:.2f} avg_reward={avg_reward:.3f} "
                 f"successes={successes}/{len(recent)}"
             )
 
